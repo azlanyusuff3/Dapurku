@@ -74,7 +74,7 @@ async function del(store,id){let oldVal=null;try{oldVal=await getOne(store,id)}c
 
 
 function getTheme(){return localStorage.getItem('dapurkuTheme')||'light'}
-function applyTheme(theme){const t=theme==='dark'?'dark':'light';document.documentElement.dataset.theme=t;localStorage.setItem('dapurkuTheme',t);const meta=document.querySelector('meta[name="theme-color"]');if(meta)meta.setAttribute('content',t==='dark'?'#171914':'#b85c38');const b=$('#themeBtn');if(b){b.textContent=t==='dark'?'☀':'☾';b.title=t==='dark'?'Switch to light mode':'Switch to dark mode'}}
+function applyTheme(theme){const t=theme==='dark'?'dark':'light';document.documentElement.dataset.theme=t;localStorage.setItem('dapurkuTheme',t);const meta=document.querySelector('meta[name="theme-color"]');if(meta)meta.setAttribute('content',t==='dark'?'#0f1320':'#5568e8');const b=$('#themeBtn');if(b){b.textContent=t==='dark'?'☀':'☾';b.title=t==='dark'?'Switch to light mode':'Switch to dark mode'}}
 function toggleTheme(){applyTheme(getTheme()==='dark'?'light':'dark');toast(`${getTheme()==='dark'?'Dark':'Light'} mode`)}
 function cloudConfig(){const c=window.DAPURKU_CONFIG||{};return{url:String(c.supabaseUrl||'').trim(),key:String(c.supabaseKey||'').trim()}}
 function hasCloudConfig(){const c=cloudConfig();return /^https:\/\/.+\.supabase\.co$/i.test(c.url)&&c.key.length>20&&!/YOUR_|PASTE_/i.test(c.key)}
@@ -3128,7 +3128,7 @@ async function renderHome(){
     <div class="section-head"><div><span class="section-kicker">SMART CHECK</span><h3>Likely running low</h3></div></div>
     ${predictions.length?`<div class="prediction-strip">${predictions.slice(0,4).map(p=>`<button class="prediction pred-check" data-name="${escapeHtml(p.name)}"><span>🧠</span><div><b>${escapeHtml(p.name)}</b><small>Usually every ~${p.avg} days · last bought ${p.daysSince} days ago</small></div><em>Check →</em></button>`).join('')}</div>`:`<div class="empty-soft">Prediction appears after DapurKu sees enough purchase history.</div>`}
   `;
-  $$('[data-go]').forEach(x=>x.onclick=()=>switchView(x.dataset.go));$('#qaItem').onclick=()=>openItemForm();$('#qaShop').onclick=()=>openShoppingForm();$('#qaScan').onclick=()=>openScanner(code=>openItemForm(null,code));
+  $$('[data-go]').forEach(x=>x.onclick=()=>switchView(x.dataset.go));$('#qaItem').onclick=()=>openItemForm();$('#qaShop').onclick=()=>openShoppingForm();$('#qaScan').onclick=()=>openScanner(async code=>{const items=await getAll('items');const found=items.find(i=>String(i.barcode||'').trim()===String(code).trim());if(found){toast(`Found ${found.name}`);openItemForm(found.id)}else{openItemForm(null,code)}});
   $$('.recipe-open').forEach(x=>x.onclick=()=>openRecipeDetail(x.dataset.id));$$('.pred-check').forEach(x=>x.onclick=()=>openPredictionCheck(x.dataset.name));if($('#startBlankBtn'))$('#startBlankBtn').onclick=confirmStartBlank;
 }
 
