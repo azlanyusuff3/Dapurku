@@ -17,6 +17,9 @@ let suppressCloudSync=false;
 let cloudBusy=false;
 let cloudStatus='Local only';
 let renderTimer=null;
+let cloudLoginPromise=null;
+let cloudResumeBusy=false;
+let lastCloudPullAt=0;
 
 const $=sel=>document.querySelector(sel);
 const $$=sel=>[...document.querySelectorAll(sel)];
@@ -85,10 +88,17 @@ function activeHouseholdName(){return activeHousehold?.name||'Shared Kitchen'}
 async function initCloudSync(){
   applyTheme(getTheme());cloudConfigured=hasCloudConfig()&&!!window.supabase;
   if(!cloudConfigured){cloudStatus='Local only';return}
-  const c=cloudConfig();cloudClient=window.supabase.createClient(c.url,c.key,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}});
+  const c=cloudConfig();
+  const freshFetch=(input,init={})=>{const next={...init};const method=String(next.method||'GET').toUpperCase();if(method==='GET')next.cache='no-store';return fetch(input,next)};
+  cloudClient=window.supabase.createClient(c.url,c.key,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true},global:{fetch:freshFetch},realtime:{worker:true}});
+  cloudClient.auth.onAuthStateChange((event,session)=>{cloudUser=session?.user||null;setTimeout(async()=>{if(cloudUser&&['SIGNED_IN','INITIAL_SESSION','USER_UPDATED'].includes(event))await runAfterCloudLogin(false);else if(!cloudUser){activeHousehold=null;cloudHouseholds=[];unsubscribeCloud();cloudStatus='Signed out';scheduleRender()}},0)});
   const {data}=await cloudClient.auth.getSession();cloudUser=data?.session?.user||null;
-  if(cloudUser)await afterCloudLogin(false);
-  cloudClient.auth.onAuthStateChange((_event,session)=>{cloudUser=session?.user||null;setTimeout(async()=>{if(cloudUser)await afterCloudLogin(false);else{activeHousehold=null;cloudHouseholds=[];unsubscribeCloud();cloudStatus='Signed out';scheduleRender()}},0)});
+  if(cloudUser)await runAfterCloudLogin(false);
+}
+async function runAfterCloudLogin(showToast=true){
+  if(cloudLoginPromise)return cloudLoginPromise;
+  cloudLoginPromise=afterCloudLogin(showToast).finally(()=>{cloudLoginPromise=null});
+  return cloudLoginPromise;
 }
 async function afterCloudLogin(showToast=true){
   if(!cloudClient||!cloudUser)return;
@@ -99,7 +109,9 @@ async function afterCloudLogin(showToast=true){
     const {data,error}=await cloudClient.rpc('dapurku_create_household',{p_name:'Our Kitchen'});if(error)throw error;
     await refreshHouseholds();if(data)localStorage.setItem('dapurkuActiveHousehold',String(data));
   }
-  const saved=localStorage.getItem('dapurkuActiveHousehold');let target=cloudHouseholds.find(h=>h.id===saved)||cloudHouseholds.find(h=>h.owner_id===cloudUser.id)||cloudHouseholds[0];
+  const saved=localStorage.getItem('dapurkuActiveHousehold');
+  const shared=cloudHouseholds.find(h=>h.membership?.role==='member');
+  let target=shared||cloudHouseholds.find(h=>h.id===saved)||cloudHouseholds.find(h=>h.owner_id===cloudUser.id)||cloudHouseholds[0];
   if(target)await activateHousehold(target.id,{showToast:false});
   if(showToast)toast('Kitchen sync connected');
 }
@@ -114,9 +126,23 @@ async function refreshHouseholds(){
 async function activateHousehold(id,{showToast=true}={}){
   if(!cloudClient||!cloudUser)return;const h=cloudHouseholds.find(x=>x.id===id);if(!h)return;
   activeHousehold=h;localStorage.setItem('dapurkuActiveHousehold',id);unsubscribeCloud();cloudStatus='Syncing…';scheduleRender();
+  await flushSyncQueue();
   const {data,error}=await cloudClient.from('dapurku_records').select('household_id,store,record_id,payload,is_deleted,updated_at').eq('household_id',id);if(error)throw error;
   if(!data?.length)await uploadLocalSnapshot();else await replaceLocalFromCloud(data);
-  subscribeCloud();cloudMembers=await getCloudMembers();await flushSyncQueue();cloudStatus=navigator.onLine?'Synced':'Offline · changes pending';if(showToast)toast(`Using ${h.name}`);scheduleRender();
+  lastCloudPullAt=Date.now();subscribeCloud();cloudMembers=await getCloudMembers();cloudStatus=navigator.onLine?'Synced':'Offline · changes pending';if(showToast)toast(`Using ${h.name}`);scheduleRender();
+}
+async function resumeCloudSync(force=false){
+  if(cloudResumeBusy||!cloudClient||!cloudUser||!navigator.onLine)return;
+  if(!force&&Date.now()-lastCloudPullAt<5000)return;
+  cloudResumeBusy=true;cloudStatus='Syncing…';scheduleRender();
+  try{
+    try{await cloudClient.auth.startAutoRefresh()}catch{}
+    await refreshHouseholds();
+    const current=activeHousehold&&cloudHouseholds.find(h=>h.id===activeHousehold.id);
+    const shared=cloudHouseholds.find(h=>h.membership?.role==='member');
+    const target=current||shared||cloudHouseholds.find(h=>h.owner_id===cloudUser.id)||cloudHouseholds[0];
+    if(target)await activateHousehold(target.id,{showToast:false});
+  }catch(err){cloudStatus='Sync issue · tap Sync Now';console.warn('DapurKu resume sync:',err.message)}finally{cloudResumeBusy=false;scheduleRender()}
 }
 async function uploadLocalSnapshot(){
   if(!activeHousehold||!cloudClient)return;const rows=[];for(const store of ['items','shopping','history','recipes']){let vals=await getAll(store);if(store==='recipes')vals=vals.filter(v=>!/^r\d+$/.test(String(v.id||'')));for(const v of vals)rows.push({household_id:activeHousehold.id,store,record_id:String(v.id),payload:v,is_deleted:false,updated_at:new Date().toISOString(),updated_by:cloudUser.id})}
@@ -137,7 +163,9 @@ async function cloudSignOut(){if(!cloudClient)return;await cloudClient.auth.sign
 async function inviteSyncEmail(email){if(!cloudClient||!cloudUser||!activeHousehold)throw new Error('Sign in first.');const {error}=await cloudClient.rpc('dapurku_invite_email',{p_household_id:activeHousehold.id,p_email:email});if(error)throw error;cloudMembers=await getCloudMembers()}
 async function getCloudMembers(){if(!cloudClient||!activeHousehold)return[];const {data,error}=await cloudClient.from('dapurku_members').select('email,role,user_id,created_at').eq('household_id',activeHousehold.id).order('created_at');if(error)return[];return data||[]}
 async function switchCloudHousehold(id){await refreshHouseholds();await activateHousehold(id);}
-window.addEventListener('online',()=>{cloudStatus=cloudUser?'Syncing…':'Local only';flushSyncQueue().catch(()=>{});scheduleRender()});window.addEventListener('offline',()=>{cloudStatus=cloudUser?'Offline · changes pending':'Local only';scheduleRender()});
+window.addEventListener('online',()=>{cloudStatus=cloudUser?'Syncing…':'Local only';resumeCloudSync(true).catch(()=>{});scheduleRender()});window.addEventListener('offline',()=>{cloudStatus=cloudUser?'Offline · changes pending':'Local only';scheduleRender()});
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')resumeCloudSync().catch(()=>{})});
+window.addEventListener('pageshow',()=>{resumeCloudSync().catch(()=>{})});
 
 const seedRecipes=[
   {
@@ -3175,17 +3203,17 @@ async function renderMore(){
   const history=(await getAll('history')).sort((a,b)=>b.date.localeCompare(a.date));const theme=getTheme();const members=cloudMembers||[];
   const syncHtml=!cloudConfigured?`<div class="sync-card"><div class="sync-state"><span class="sync-dot local"></span><div><b>Cloud sync not configured</b><small>App is working locally. Complete Supabase setup when you are ready to share the kitchen.</small></div></div><div class="note">Use <b>SETUP_SUPABASE.sql</b>, then paste your Project URL and Publishable key into <b>config.js</b>.</div></div>`
   :!cloudUser?`<div class="sync-card"><div class="sync-state"><span class="sync-dot"></span><div><b>Sign in to sync your kitchen</b><small>Use the same shared kitchen from another phone with a different email account.</small></div></div><div class="settings-row"><button class="btn btn-secondary" id="signInBtn">Sign In</button><button class="btn btn-primary" id="signUpBtn">Create Account</button></div></div>`
-  :`<div class="sync-card"><div class="sync-state"><span class="sync-dot ${navigator.onLine?'ok':'warn'}"></span><div><b>${escapeHtml(cloudStatus)}</b><small>${escapeHtml(cloudUser.email||'')} · ${escapeHtml(activeHouseholdName())}</small></div></div>${cloudHouseholds.length>1?`<div class="field"><label>Kitchen</label><select id="householdSelect">${cloudHouseholds.map(h=>`<option value="${h.id}" ${activeHousehold?.id===h.id?'selected':''}>${escapeHtml(h.name)}${h.owner_id===cloudUser.id?' · Owner':''}</option>`).join('')}</select></div>`:''}<div class="settings-row"><button class="btn btn-secondary" id="syncNowBtn">↻ Sync Now</button><button class="btn btn-secondary" id="signOutBtn">Sign Out</button></div>${activeHousehold?.owner_id===cloudUser.id?`<div class="share-box"><b>Share this kitchen</b><small>Add the email your partner will use to sign in to DapurKu.</small><div class="share-line"><input id="shareEmail" type="email" placeholder="partner@email.com"><button class="btn btn-primary" id="shareEmailBtn">Add Email</button></div></div>`:''}<div class="member-list">${members.map(m=>`<div><span>${m.user_id?'✓':'○'}</span><b>${escapeHtml(m.email)}</b><small>${m.role==='owner'?'Owner':m.user_id?'Connected':'Waiting for sign-in'}</small></div>`).join('')}</div><div class="note">Changes to pantry, shopping list, purchase history and your own recipes sync between connected members. Built-in recipes and theme stay on each device.</div></div>`;
+  :`<div class="sync-card"><div class="sync-state"><span class="sync-dot ${navigator.onLine?'ok':'warn'}"></span><div><b>${escapeHtml(cloudStatus)}</b><small>${escapeHtml(cloudUser.email||'')} · ${escapeHtml(activeHouseholdName())}</small></div></div>${cloudHouseholds.length>1?`<div class="field"><label>Kitchen</label><select id="householdSelect">${cloudHouseholds.map(h=>`<option value="${h.id}" ${activeHousehold?.id===h.id?'selected':''}>${escapeHtml(h.name)}${h.owner_id===cloudUser.id?' · Mine':' · Shared'}</option>`).join('')}</select></div>`:''}<div class="settings-row"><button class="btn btn-secondary" id="syncNowBtn">↻ Sync Now</button><button class="btn btn-secondary" id="signOutBtn">Sign Out</button></div>${activeHousehold?.owner_id===cloudUser.id?`<div class="share-box"><b>Share this kitchen</b><small>Add the email your partner will use to sign in to DapurKu.</small><div class="share-line"><input id="shareEmail" type="email" placeholder="partner@email.com"><button class="btn btn-primary" id="shareEmailBtn">Add Email</button></div></div>`:''}<div class="member-list">${members.map(m=>`<div><span>${m.user_id?'✓':'○'}</span><b>${escapeHtml(m.email)}</b><small>${m.role==='owner'?'Owner':m.user_id?'Connected':'Waiting for sign-in'}</small></div>`).join('')}</div><div class="note">Changes to pantry, shopping list, purchase history and your own recipes sync between connected members. Built-in recipes and theme stay on each device.</div></div>`;
   $('#view-more').innerHTML=`<div class="page-intro"><span class="page-icon">⋯</span><div><span class="section-kicker">MORE</span><h2>Kitchen settings</h2><p>Theme, family sync, purchase history and backup.</p></div></div>
     <div class="section-head"><div><h3>Appearance</h3></div></div><div class="theme-card"><div><b>${theme==='dark'?'Dark Mode':'Light Mode'}</b><small>Your theme is remembered on this device.</small></div><button class="theme-switch ${theme==='dark'?'on':''}" id="themeToggle" aria-label="Toggle theme"><i></i></button></div>
     <div class="section-head"><div><h3>Family Sync</h3><p>Share one live kitchen using separate email accounts.</p></div></div>${syncHtml}
     <div class="section-head"><div><h3>Purchase History</h3></div></div>${history.length?history.slice(0,30).map(h=>`<div class="history-card"><div class="history-head"><b>${fmtDate(h.date)}</b><strong>${h.total?`RM ${Number(h.total).toFixed(2)}`:'—'}</strong></div><small>${escapeHtml(h.store||'Store not recorded')}</small><div class="history-items">${h.items.map(i=>escapeHtml(i.name)+(i.qty&&i.qty!==1?` ×${i.qty}`:'')).join(' · ')}</div></div>`).join(''):'<div class="empty-soft">No purchase history yet.</div>'}
     <div class="section-head"><div><h3>Backup</h3><p>Useful before changing phone or clearing browser data.</p></div></div><div class="settings-row"><button class="btn btn-secondary" id="exportBtn">Export Backup</button><label class="btn btn-secondary file-btn">Import Backup<input type="file" id="importFile" accept="application/json"></label></div>
-    <div class="section-head"><div><h3>About</h3></div></div><div class="note">DapurKu v3.0 · Offline-first PWA · Light/Dark · Family Sync · auto purchase dates · smart shopping · expiry · history · prediction · pantry-based recipe discovery.</div>
+    <div class="section-head"><div><h3>About</h3></div></div><div class="note">DapurKu v3.3 · Offline-first PWA · Light/Dark · Family Sync · auto purchase dates · smart shopping · expiry · history · prediction · pantry-based recipe discovery.</div>
     <div class="danger-zone"><b>Reset local data</b><p>This deletes the local copy on this device. If Family Sync is active, cloud data can download again on the next sync.</p><button class="btn btn-danger-soft" id="resetBtn">Reset Local DapurKu</button></div>`;
   $('#themeToggle').onclick=()=>{toggleTheme();renderMore()};$('#exportBtn').onclick=exportData;$('#importFile').onchange=importData;$('#resetBtn').onclick=confirmReset;
   if($('#signInBtn'))$('#signInBtn').onclick=()=>openAuthModal('signin');if($('#signUpBtn'))$('#signUpBtn').onclick=()=>openAuthModal('signup');if($('#signOutBtn'))$('#signOutBtn').onclick=async()=>{await cloudSignOut();toast('Signed out. Local data stays on this device.');render()};
-  if($('#syncNowBtn'))$('#syncNowBtn').onclick=async()=>{try{await refreshHouseholds();if(activeHousehold)await activateHousehold(activeHousehold.id,{showToast:false});else if(cloudHouseholds[0])await activateHousehold(cloudHouseholds[0].id,{showToast:false});cloudMembers=await getCloudMembers();toast('Kitchen synced')}catch(e){toast('Sync failed: '+e.message)}};
+  if($('#syncNowBtn'))$('#syncNowBtn').onclick=async()=>{try{await resumeCloudSync(true);cloudMembers=await getCloudMembers();toast('Kitchen synced')}catch(e){toast('Sync failed: '+e.message)}};
   if($('#householdSelect'))$('#householdSelect').onchange=async e=>{try{await switchCloudHousehold(e.target.value)}catch(err){alert('Could not switch kitchen: '+err.message)}};
   if($('#shareEmailBtn'))$('#shareEmailBtn').onclick=async()=>{const email=$('#shareEmail').value.trim();if(!email)return toast('Enter an email first');try{await inviteSyncEmail(email);toast(`Kitchen access added for ${email}`);renderMore()}catch(err){alert('Could not add email: '+err.message)}};
 }
@@ -3239,10 +3267,10 @@ async function openPredictionCheck(name){const items=await getAll('items'),item=
 
 function openScanner(onFound){modal('Scan Barcode',`<div class="scanner-wrap"><video id="scannerVideo" playsinline muted></video><div class="scanner-status" id="scannerStatus">Requesting camera access...</div></div><div class="note">If your browser does not support barcode detection, enter the barcode manually in Add Pantry Item. No external scanner library is loaded, so the PWA remains offline-friendly.</div>`);const video=$('#scannerVideo'),status=$('#scannerStatus');let stream=null,stopped=false;const stop=()=>{stopped=true;if(stream)stream.getTracks().forEach(t=>t.stop())};window.__stopScanner=stop;(async()=>{if(!('BarcodeDetector'in window)){status.textContent='BarcodeDetector is not supported in this browser. Use manual barcode entry.';return}try{const formats=await BarcodeDetector.getSupportedFormats(),detector=new BarcodeDetector({formats:formats.filter(f=>['ean_13','ean_8','upc_a','upc_e','code_128'].includes(f))});stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}},audio:false});video.srcObject=stream;await video.play();status.textContent='Point the camera at a barcode...';const tick=async()=>{if(stopped)return;try{const codes=await detector.detect(video);if(codes.length){const code=codes[0].rawValue;stop();closeModal();onFound?.(code);return}}catch{}requestAnimationFrame(tick)};tick()}catch(err){status.textContent='Could not open camera: '+err.message}})()}
 
-async function exportData(){const data={version:'3.1',exportedAt:new Date().toISOString()};for(const s of STORE_NAMES)data[s]=await getAll(s);const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`DapurKu-backup-${todayISO()}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);toast('Backup exported')}
+async function exportData(){const data={version:'3.3',exportedAt:new Date().toISOString()};for(const s of STORE_NAMES)data[s]=await getAll(s);const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`DapurKu-backup-${todayISO()}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);toast('Backup exported')}
 async function importData(e){const file=e.target.files?.[0];if(!file)return;try{const data=JSON.parse(await file.text());for(const s of STORE_NAMES){if(Array.isArray(data[s])){await clearStore(s);for(const x of data[s])await put(s,x)}}await put('settings',{id:'initialized',value:true});await ensureRecipeLibrary();toast('Backup imported');render()}catch(err){alert('Import failed: '+err.message)}e.target.value=''}
 async function confirmReset(){if(!confirm('Delete ALL DapurKu data stored on this device?'))return;for(const s of STORE_NAMES)await clearStore(s);await put('settings',{id:'initialized',value:true});await put('settings',{id:'demo',value:false});await ensureRecipeLibrary();toast('Local data cleared. Built-in recipe library restored.');render()}
 async function confirmStartBlank(){if(!confirm('Remove the demo pantry and purchase history? The recipe library will stay.'))return;for(const s of ['items','shopping','history'])await clearStore(s);await put('settings',{id:'demo',value:false});toast('Demo data removed. Your kitchen is ready.');render()}
 function wireNav(){$$('.nav-btn').forEach(b=>b.onclick=()=>switchView(b.dataset.view));if($('#themeBtn'))$('#themeBtn').onclick=toggleTheme}
 window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;$('#installBtn').classList.remove('hidden')});$('#installBtn').onclick=async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;$('#installBtn').classList.add('hidden')};window.addEventListener('appinstalled',()=>toast('DapurKu installed'));
-(async function init(){try{applyTheme(getTheme());await openDB();await seedIfNeeded();wireNav();await initCloudSync();await render();if('serviceWorker'in navigator)navigator.serviceWorker.register('./sw.js').catch(()=>{})}catch(err){document.body.innerHTML=`<pre style="padding:20px">DapurKu could not start:\n${escapeHtml(err.stack||err.message)}</pre>`}})();
+(async function init(){try{applyTheme(getTheme());await openDB();await seedIfNeeded();wireNav();await initCloudSync();await render();if('serviceWorker'in navigator)navigator.serviceWorker.register('./sw.js?v=3.3').catch(()=>{})}catch(err){document.body.innerHTML=`<pre style="padding:20px">DapurKu could not start:\n${escapeHtml(err.stack||err.message)}</pre>`}})();

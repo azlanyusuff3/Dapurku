@@ -42,3 +42,15 @@ V3.1 UPDATE
 - Pantry/shopping categories are in Bahasa Melayu.
 - Removed item Location field and location filter to make entry faster.
 - Pantry now filters by category instead of location.
+
+DapurKu v3.3 SYNC FIX
+---------------------
+If Supabase was already set up using v3.0-v3.2, DO NOT rerun the full setup.
+Run MIGRATE_v3_3_SYNC_FIX.sql once in Supabase SQL Editor instead.
+It merges duplicate kitchens owned by the same account and prevents new duplicates.
+
+v3.3 also fixes iPhone/iOS PWA sync by:
+- never caching Supabase/API responses in the service worker
+- using no-store for Supabase GET requests
+- pulling fresh cloud data when the PWA returns to the foreground
+- enabling Supabase Realtime worker support
