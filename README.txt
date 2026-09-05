@@ -1,25 +1,44 @@
-DAPURKU v2.1 - OFFLINE-FIRST PWA
+DapurKu v3.1.0
+============
 
-WHAT CHANGED
-- Entire interface is now English.
-- Shopping Mode now has Cancel and Finish buttons. Cancel restores tick states from before the shopping session.
-- Clear naming: Add Pantry Item = tracked stock/expiry; Add to Shopping List = one-off purchase item.
-- New warm kitchen-inspired visual design, separate from MyCommit styling.
-- Expanded Malaysian recipe discovery library with pantry matching, Ready Now / missing item logic, smart sorting and Pick for Me.
-- Selected Che Nom recipes link to the official source. DapurKu stores only an ingredient-planning checklist, not copied full recipe instructions.
-- Purchase History, Smart Prediction, expiry tracking, barcode field/scanner, backup/import and offline mode remain.
+New in v3
+- Persistent Light / Dark mode toggle.
+- Optional Supabase email/password login.
+- Shared Kitchen: owner adds another email; both accounts can update the same pantry, shopping list and history.
+- Local-first: app still works offline and queues cloud changes until online.
+- Purchase date can be entered when first creating pantry/shopping items.
+- Finish Shopping defaults to today's purchase date and records it automatically.
+- Shopping list shows Last bought date automatically next time.
 
-HOW TO TRY
-1. Upload all files/folders to a GitHub repository.
-2. Settings > Pages > Deploy from branch > main / root.
-3. Open the GitHub Pages URL.
-4. iPhone/iPad: Share > Add to Home Screen. Android: browser menu > Install app.
+FAMILY SYNC SETUP
+1. Create a free Supabase project.
+2. Open SQL Editor and run SETUP_SUPABASE.sql once.
+3. In Supabase Project Settings / API, copy:
+   - Project URL
+   - Publishable key (or legacy anon key)
+   NEVER use service_role / secret key in this PWA.
+4. Edit config.js:
+   supabaseUrl: 'https://YOURPROJECT.supabase.co'
+   supabaseKey: 'YOUR_PUBLISHABLE_KEY'
+5. In Supabase Authentication > URL Configuration, set your GitHub Pages URL as Site URL and add it to Redirect URLs.
+6. Upload all files to GitHub Pages.
+7. Open DapurKu > More > Family Sync > Create Account.
+8. Kitchen owner signs in and enters partner email under Share this kitchen.
+9. Partner creates/signs in with exactly that email, then taps Sync Now if needed.
+10. Select the shared kitchen if more than one kitchen appears.
 
-DATA
-Pantry, shopping, history and custom recipes are stored locally in IndexedDB. Use Export Backup before clearing browser storage or moving devices.
+GITHUB PAGES
+Upload the CONTENTS of this folder to the repository root, including config.js and SETUP_SUPABASE.sql. Enable Settings > Pages > Deploy from branch > main / root.
+
+Important
+- Built-in recipes are not copied to Supabase; each device already contains them.
+- Custom recipes are synced.
+- Theme is per-device and not synced.
+- If two offline devices edit the exact same record before reconnecting, the last synced edit wins for that record.
 
 
-v2.1 LANGUAGE UPDATE
-- UI/navigation remains English.
-- Built-in recipe names/ingredients/recipe notes display in Bahasa Melayu.
-- Recipe matching stays bilingual so English pantry items still match Malay recipe ingredients.
+V3.1 UPDATE
+- Item-specific grocery icons with automatic name matching and a large manual icon picker.
+- Pantry/shopping categories are in Bahasa Melayu.
+- Removed item Location field and location filter to make entry faster.
+- Pantry now filters by category instead of location.

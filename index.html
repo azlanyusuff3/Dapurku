@@ -4,6 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#b85c38" />
+  <script>(function(){try{document.documentElement.dataset.theme=localStorage.getItem('dapurkuTheme')||'light'}catch(e){}})();</script>
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <meta name="apple-mobile-web-app-title" content="DapurKu" />
@@ -16,7 +17,7 @@
   <div class="app-shell">
     <header class="topbar">
       <div class="brand-lockup"><div class="brand-mark">D</div><div><h1>DapurKu</h1><span>pantry • shop • cook</span></div></div>
-      <button id="installBtn" class="install-btn hidden" title="Install DapurKu">Install</button>
+      <div class="top-actions"><button id="themeBtn" class="icon-btn" title="Switch theme">☾</button><button id="installBtn" class="install-btn hidden" title="Install DapurKu">Install</button></div>
     </header>
     <main id="appMain">
       <section id="view-home" class="view active"></section>
@@ -34,6 +35,8 @@
     </nav>
   </div>
   <div id="toast" class="toast"></div><div id="modalRoot"></div>
+  <script src="config.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="app.js"></script>
 </body>
 </html>
