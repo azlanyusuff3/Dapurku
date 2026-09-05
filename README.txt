@@ -1,18 +1,25 @@
-DAPURKU v1 - OFFLINE-FIRST PWA
+DAPURKU v2.1 - OFFLINE-FIRST PWA
 
-Cara cuba paling mudah:
-1. Upload semua fail/folder dalam folder DapurKu_v1 ke GitHub repo.
-2. Enable GitHub Pages (Settings > Pages > Deploy from branch > main / root).
-3. Buka URL Pages di Safari/Chrome.
-4. iPhone/iPad: Share > Add to Home Screen.
-5. Android/Chrome: menu > Install app / Add to Home screen.
+WHAT CHANGED
+- Entire interface is now English.
+- Shopping Mode now has Cancel and Finish buttons. Cancel restores tick states from before the shopping session.
+- Clear naming: Add Pantry Item = tracked stock/expiry; Add to Shopping List = one-off purchase item.
+- New warm kitchen-inspired visual design, separate from MyCommit styling.
+- Expanded Malaysian recipe discovery library with pantry matching, Ready Now / missing item logic, smart sorting and Pick for Me.
+- Selected Che Nom recipes link to the official source. DapurKu stores only an ingredient-planning checklist, not copied full recipe instructions.
+- Purchase History, Smart Prediction, expiry tracking, barcode field/scanner, backup/import and offline mode remain.
 
-Data disimpan local dalam browser menggunakan IndexedDB. Export Backup dalam tab More untuk backup JSON.
+HOW TO TRY
+1. Upload all files/folders to a GitHub repository.
+2. Settings > Pages > Deploy from branch > main / root.
+3. Open the GitHub Pages URL.
+4. iPhone/iPad: Share > Add to Home Screen. Android: browser menu > Install app.
 
-Nota barcode:
-- Scanner kamera cuba guna BarcodeDetector API jika browser menyokongnya.
-- Jika browser tak support, field barcode masih boleh diisi manual. Ini sengaja dibuat tanpa external CDN supaya PWA kekal offline selepas install.
+DATA
+Pantry, shopping, history and custom recipes are stored locally in IndexedDB. Use Export Backup before clearing browser storage or moving devices.
 
-Nota resepi Che Nom:
-- DapurKu v1 tidak menyalin penuh kandungan resepi pihak ketiga.
-- Library demo fokus pada ingredient planning / pantry matching dan menyediakan pautan sumber rasmi bila berkaitan.
+
+v2.1 LANGUAGE UPDATE
+- UI/navigation remains English.
+- Built-in recipe names/ingredients/recipe notes display in Bahasa Melayu.
+- Recipe matching stays bilingual so English pantry items still match Malay recipe ingredients.

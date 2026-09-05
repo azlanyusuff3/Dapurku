@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="ms">
+<html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="theme-color" content="#123f2e" />
+  <meta name="theme-color" content="#b85c38" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <meta name="apple-mobile-web-app-title" content="DapurKu" />
@@ -15,13 +15,9 @@
 <body>
   <div class="app-shell">
     <header class="topbar">
-      <div>
-        <div class="eyebrow">PANTRY • SHOP • COOK</div>
-        <h1>DapurKu</h1>
-      </div>
-      <button id="installBtn" class="icon-btn hidden" title="Install DapurKu">⬇️</button>
+      <div class="brand-lockup"><div class="brand-mark">D</div><div><h1>DapurKu</h1><span>pantry • shop • cook</span></div></div>
+      <button id="installBtn" class="install-btn hidden" title="Install DapurKu">Install</button>
     </header>
-
     <main id="appMain">
       <section id="view-home" class="view active"></section>
       <section id="view-shop" class="view"></section>
@@ -29,19 +25,15 @@
       <section id="view-recipes" class="view"></section>
       <section id="view-more" class="view"></section>
     </main>
-
-    <nav class="bottom-nav" aria-label="Navigasi utama">
-      <button data-view="home" class="nav-btn active"><span>🏠</span><small>Home</small></button>
+    <nav class="bottom-nav" aria-label="Main navigation">
+      <button data-view="home" class="nav-btn active"><span>⌂</span><small>Home</small></button>
       <button data-view="shop" class="nav-btn"><span>🛒</span><small>Shop</small></button>
-      <button data-view="pantry" class="nav-btn"><span>🥫</span><small>Pantry</small></button>
-      <button data-view="recipes" class="nav-btn"><span>🍳</span><small>Resipi</small></button>
-      <button data-view="more" class="nav-btn"><span>⚙️</span><small>More</small></button>
+      <button data-view="pantry" class="nav-btn"><span>▦</span><small>Pantry</small></button>
+      <button data-view="recipes" class="nav-btn"><span>🍳</span><small>Cook</small></button>
+      <button data-view="more" class="nav-btn"><span>•••</span><small>More</small></button>
     </nav>
   </div>
-
-  <div id="toast" class="toast"></div>
-  <div id="modalRoot"></div>
-
+  <div id="toast" class="toast"></div><div id="modalRoot"></div>
   <script src="app.js"></script>
 </body>
 </html>
