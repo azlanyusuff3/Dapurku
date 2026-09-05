@@ -1,0 +1,14 @@
+{
+  "name":"DapurKu - Pantry & Shopping",
+  "short_name":"DapurKu",
+  "description":"Offline-first pantry, shopping list, expiry, purchase history, smart prediction dan idea masak.",
+  "start_url":"./",
+  "display":"standalone",
+  "background_color":"#f4f6f2",
+  "theme_color":"#123f2e",
+  "lang":"ms-MY",
+  "icons":[
+    {"src":"icons/icon-192.png","sizes":"192x192","type":"image/png"},
+    {"src":"icons/icon-512.png","sizes":"512x512","type":"image/png"}
+  ]
+}
