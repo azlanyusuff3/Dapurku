@@ -148,3 +148,77 @@ html[data-theme="dark"] .item-icon-choice,html[data-theme="dark"] .selected-item
     font-size:16px!important;
   }
 }
+
+/* DapurKu v3.4 — navy + clear blue glass UI, no purple */
+html[data-theme="light"]{
+  color-scheme:light;
+  --bg:#f3f6fa;--paper:rgba(255,255,255,.84);--ink:#172235;--muted:#718096;
+  --line:rgba(86,112,145,.16);--terracotta:#2f6fda;--terracotta-dark:#1f56ad;
+  --sage:#4f8fe8;--sage-soft:#eaf3ff;--mustard:#e3a148;--rose:#d95d71;
+  --cream:rgba(231,241,255,.82);--shadow:0 14px 36px rgba(29,54,88,.08);
+}
+html[data-theme="light"],html[data-theme="light"] body{background:linear-gradient(180deg,#f7f9fc 0%,#eef3f8 100%);color:var(--ink)}
+html[data-theme="light"] .topbar{background:rgba(247,249,252,.78);border-color:rgba(102,126,158,.13);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px)}
+html[data-theme="light"] .brand-mark{background:linear-gradient(145deg,#205aa9,#3f83e8);box-shadow:0 9px 24px rgba(39,100,183,.22)}
+html[data-theme="light"] .kitchen-hero{background:linear-gradient(135deg,#172c47 0%,#235b9e 52%,#4c8bd9 100%);box-shadow:0 18px 46px rgba(27,69,116,.18)}
+html[data-theme="light"] .kitchen-hero:before{background:#f0a85a;opacity:.30}
+html[data-theme="light"] .hero-kicker{color:#dbeaff}html[data-theme="light"] .hero-copy p{color:#e7f1fc}
+html[data-theme="light"] .pulse-main{background:linear-gradient(145deg,#245fae,#3e82d5)}
+html[data-theme="light"] .shopping-banner{background:linear-gradient(135deg,#172c47,#2c69ad)}
+html[data-theme="light"] .shopping-progress i{background:#f2b765}
+html[data-theme="light"] .btn-primary{background:linear-gradient(135deg,#2466bd,#3d83dc);box-shadow:0 8px 20px rgba(45,111,199,.18)}
+html[data-theme="light"] .btn-secondary{background:rgba(255,255,255,.66);color:#39506e;border:1px solid rgba(74,107,145,.14);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+html[data-theme="light"] .recipe-plate{background:linear-gradient(135deg,#edf5ff,#d7e8fb)}
+html[data-theme="light"] .recipe-tile:nth-child(even) .recipe-plate{background:linear-gradient(135deg,#fff5e8,#f8dfbf)}
+html[data-theme="light"] .prediction{background:rgba(235,244,255,.78);border-color:rgba(70,126,192,.17)}
+html[data-theme="light"] .shop-item,html[data-theme="light"] .pantry-card,html[data-theme="light"] .recipe-tile,html[data-theme="light"] .sync-card,html[data-theme="light"] .theme-card{background:rgba(255,255,255,.78);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
+html[data-theme="light"] .mini-btn{background:rgba(229,237,247,.86)}
+html[data-theme="light"] .mini-btn.shop-delete{background:rgba(217,93,113,.10);color:#b63f56;border:1px solid rgba(217,93,113,.10)}
+html[data-theme="light"] .bottom-nav{background:rgba(18,31,50,.92);border:1px solid rgba(255,255,255,.08);box-shadow:0 18px 42px rgba(17,33,54,.22);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px)}
+html[data-theme="light"] .nav-btn.active{background:rgba(225,239,255,.96);color:#245fae}
+html[data-theme="light"] .page-icon,html[data-theme="light"] .shop-item-icon,html[data-theme="light"] .pantry-icon,html[data-theme="light"] .ingredient-icon{background:rgba(229,240,255,.86)}
+html[data-theme="light"] .note{background:rgba(236,242,249,.78)}
+html[data-theme="light"] .recipe-cta{background:rgba(231,241,255,.75)}
+html[data-theme="light"] .recipe-row-score{background:rgba(234,240,248,.80)}
+html[data-theme="light"] .ingredient{background:rgba(248,250,253,.82)}
+html[data-theme="light"] .status-switch{background:rgba(233,239,246,.85)}
+html[data-theme="light"] .theme-switch.on{background:#2f6fda}
+html[data-theme="light"] .item-icon-choice.active{border-color:#2f6fda;background:#eaf3ff;box-shadow:0 0 0 2px rgba(47,111,218,.10)}
+html[data-theme="light"] .toolbar input:focus,html[data-theme="light"] .toolbar select:focus,html[data-theme="light"] .recipe-tools input:focus,html[data-theme="light"] .recipe-tools select:focus,html[data-theme="light"] .field input:focus,html[data-theme="light"] .field select:focus,html[data-theme="light"] .field textarea:focus{border-color:#4a88dc;box-shadow:0 0 0 3px rgba(47,111,218,.09)}
+
+html[data-theme="dark"]{
+  color-scheme:dark;
+  --bg:#0d151f;--paper:rgba(20,31,45,.86);--ink:#f2f6fb;--muted:#9aa9ba;
+  --line:rgba(135,163,195,.16);--terracotta:#63a4f2;--terracotta-dark:#8cc0ff;
+  --sage:#74b0f4;--sage-soft:#192d45;--mustard:#edb45e;--rose:#ef7e90;
+  --cream:rgba(27,48,72,.86);--shadow:0 16px 40px rgba(0,0,0,.28);
+}
+html[data-theme="dark"],html[data-theme="dark"] body{background:linear-gradient(180deg,#0c141e,#101b28);color:var(--ink)}
+html[data-theme="dark"] .topbar{background:rgba(12,20,30,.78);border-color:rgba(139,166,197,.12);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px)}
+html[data-theme="dark"] .brand-mark{background:linear-gradient(145deg,#2c6eb7,#67a8ed);box-shadow:0 9px 24px rgba(45,116,190,.20)}
+html[data-theme="dark"] .kitchen-hero{background:linear-gradient(135deg,#101f32 0%,#174774 55%,#2869a8 100%)}
+html[data-theme="dark"] .kitchen-hero:before{background:#e9a04e;opacity:.20}
+html[data-theme="dark"] .btn-primary{background:linear-gradient(135deg,#2b72bd,#4c95df);color:#fff}
+html[data-theme="dark"] .btn-secondary{background:rgba(30,44,61,.80);color:#e0e8f2;border:1px solid rgba(130,158,189,.12)}
+html[data-theme="dark"] .shopping-banner{background:linear-gradient(135deg,#101f32,#174d7f)}
+html[data-theme="dark"] .shopping-progress i{background:#e9ad58}
+html[data-theme="dark"] .shop-item,html[data-theme="dark"] .pantry-card,html[data-theme="dark"] .recipe-tile,html[data-theme="dark"] .sync-card,html[data-theme="dark"] .theme-card{background:rgba(20,31,45,.82);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
+html[data-theme="dark"] .mini-btn{background:rgba(39,54,72,.86)}
+html[data-theme="dark"] .mini-btn.shop-delete{background:rgba(239,126,144,.12);color:#ff9aaa;border:1px solid rgba(239,126,144,.11)}
+html[data-theme="dark"] .bottom-nav{background:rgba(6,13,22,.91);border:1px solid rgba(255,255,255,.06);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px)}
+html[data-theme="dark"] .nav-btn.active{background:rgba(30,65,103,.90);color:#9dccff}
+html[data-theme="dark"] .recipe-plate{background:linear-gradient(135deg,#172c45,#21466f)}
+html[data-theme="dark"] .recipe-tile:nth-child(even) .recipe-plate{background:linear-gradient(135deg,#34291e,#4a3827)}
+html[data-theme="dark"] .prediction{background:rgba(23,46,71,.82);border-color:rgba(93,147,205,.20)}
+html[data-theme="dark"] .theme-switch.on{background:#4e91db}
+html[data-theme="dark"] .item-icon-choice.active{background:#193c61;border-color:#63a4f2}
+
+/* Compact purchase history hub */
+.history-hub{width:100%;border:1px solid var(--line);background:var(--paper);border-radius:20px;padding:14px;display:grid;grid-template-columns:42px 1fr auto;align-items:center;gap:10px;text-align:left;color:var(--ink);box-shadow:var(--shadow);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
+.history-hub-icon{width:42px;height:42px;border-radius:14px;background:var(--cream);display:grid;place-items:center;font-size:21px}.history-hub b{display:block;font-size:12px}.history-hub small{display:block;font-size:9px;color:var(--muted);margin-top:3px}.history-hub em{font-size:9px;font-style:normal;color:var(--terracotta);font-weight:850;white-space:nowrap}
+.history-manager-head{display:flex;align-items:center;gap:10px;justify-content:space-between;margin-bottom:10px;padding:2px}.history-manager-head b{display:block;font-size:12px}.history-manager-head small{display:block;color:var(--muted);font-size:9px;line-height:1.35;margin-top:2px;max-width:310px}.history-manager-list{display:grid;gap:8px;max-height:min(62vh,620px);overflow:auto;padding:1px 2px 4px}.history-manage-row{display:grid;grid-template-columns:minmax(0,1fr) 38px;gap:8px;align-items:center;border:1px solid var(--line);background:var(--paper);border-radius:17px;padding:11px}.history-manage-main{min-width:0}.history-manage-main>small{display:block;color:var(--muted);font-size:9px;margin:3px 0}.history-delete-btn{width:38px;height:38px;border:1px solid rgba(217,93,113,.12);border-radius:12px;background:rgba(217,93,113,.10);font-size:16px;color:var(--rose)}
+html[data-theme="dark"] .history-delete-btn{background:rgba(239,126,144,.12);border-color:rgba(239,126,144,.10)}
+
+@media(max-width:520px){
+  .history-hub{grid-template-columns:40px minmax(0,1fr) auto;padding:12px}.history-hub em{font-size:8px}.history-manager-head{align-items:flex-start}.history-manager-head .btn{flex:0 0 auto}
+}

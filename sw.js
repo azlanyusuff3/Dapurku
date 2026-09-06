@@ -1,4 +1,4 @@
-const CACHE='dapurku-v3-3.0.0';
+const CACHE='dapurku-v3-4.0.0';
 const CORE=['./styles.css','./app.js','./manifest.webmanifest','./icons/icon-192.png','./icons/icon-512.png'];
 self.addEventListener('install',event=>{
   event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(CORE)).then(()=>self.skipWaiting()));
