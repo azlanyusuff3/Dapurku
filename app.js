@@ -1,6 +1,7 @@
 const DB_NAME='DapurKuDB';
 const DB_VERSION=1;
 const STORE_NAMES=['items','shopping','history','recipes','settings'];
+const SYNC_STORES=['items','shopping','history','recipes'];
 let db;
 let currentView='home';
 let deferredPrompt=null;
@@ -14,17 +15,27 @@ let activeHousehold=null;
 let cloudChannel=null;
 let cloudConfigured=false;
 let suppressCloudSync=false;
+let pauseCloudFlush=false;
 let cloudBusy=false;
+let cloudFlushPromise=null;
+let cloudPullBusy=false;
+let autoShoppingPromise=null;
+let renderPromise=null;
+let renderPending=false;
 let cloudStatus='Local only';
 let renderTimer=null;
 let cloudLoginPromise=null;
 let cloudResumeBusy=false;
+let cloudResumePromise=null;
 let lastCloudPullAt=0;
+let cloudRealtimeTimer=null;
+let cloudRealtimeNeedsPull=false;
 
 const $=sel=>document.querySelector(sel);
 const $$=sel=>[...document.querySelectorAll(sel)];
 const uid=()=>crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-const todayISO=()=>new Date().toISOString().slice(0,10);
+const localDateISO=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+const todayISO=()=>localDateISO(new Date());
 const fmtDate=d=>d ? new Intl.DateTimeFormat('en-MY',{day:'numeric',month:'short',year:'numeric'}).format(new Date(`${d}T12:00:00`)) : '-';
 const escapeHtml=s=>String(s??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 const daysBetween=(a,b)=>Math.round((new Date(b)-new Date(a))/86400000);
@@ -69,8 +80,9 @@ function syncableRecord(store,val=null){return ['items','shopping','history'].in
 function readSyncQueue(){try{return JSON.parse(localStorage.getItem('dapurkuSyncQueue')||'[]')}catch{return []}}
 function writeSyncQueue(q){localStorage.setItem('dapurkuSyncQueue',JSON.stringify(q))}
 function queueCloudRecord(store,id,payload,isDeleted=false){
-  if(suppressCloudSync||!cloudUser||!activeHousehold||!syncableRecord(store,payload||{id}))return;
-  const key=`${activeHousehold.id}:${store}:${id}`,q=readSyncQueue().filter(x=>x.key!==key);q.push({key,householdId:activeHousehold.id,store,id,payload,isDeleted,queuedAt:new Date().toISOString()});writeSyncQueue(q);flushSyncQueue().catch(()=>{});
+  const householdId=activeHousehold?.id||localStorage.getItem('dapurkuBoundHousehold');
+  if(suppressCloudSync||!householdId||!syncableRecord(store,payload||{id}))return;
+  const key=`${householdId}:${store}:${id}`,q=readSyncQueue().filter(x=>x.key!==key);q.push({key,householdId,store,id,payload,isDeleted,changeId:uid(),queuedAt:new Date().toISOString()});writeSyncQueue(q);if(!pauseCloudFlush&&!cloudPullBusy&&cloudUser&&activeHousehold)flushSyncQueue().catch(()=>{});
 }
 async function put(store,val){const out=await putRaw(store,val);queueCloudRecord(store,val.id,val,false);return out}
 async function del(store,id){let oldVal=null;try{oldVal=await getOne(store,id)}catch{}await delRaw(store,id);queueCloudRecord(store,id,oldVal||{id},true)}
@@ -91,9 +103,9 @@ async function initCloudSync(){
   const c=cloudConfig();
   const freshFetch=(input,init={})=>{const next={...init};const method=String(next.method||'GET').toUpperCase();if(method==='GET')next.cache='no-store';return fetch(input,next)};
   cloudClient=window.supabase.createClient(c.url,c.key,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true},global:{fetch:freshFetch},realtime:{worker:true}});
-  cloudClient.auth.onAuthStateChange((event,session)=>{cloudUser=session?.user||null;setTimeout(async()=>{if(cloudUser&&['SIGNED_IN','INITIAL_SESSION','USER_UPDATED'].includes(event))await runAfterCloudLogin(false);else if(!cloudUser){activeHousehold=null;cloudHouseholds=[];unsubscribeCloud();cloudStatus='Signed out';scheduleRender()}},0)});
+  cloudClient.auth.onAuthStateChange((event,session)=>{cloudUser=session?.user||null;setTimeout(async()=>{if(cloudUser&&['SIGNED_IN','INITIAL_SESSION','USER_UPDATED'].includes(event)){try{await runAfterCloudLogin(false)}catch(err){cloudStatus='Sync issue · tap Sync Now';console.warn('DapurKu login sync:',err.message);scheduleRender()}}else if(!cloudUser){activeHousehold=null;cloudHouseholds=[];unsubscribeCloud();cloudStatus='Signed out';scheduleRender()}},0)});
   const {data}=await cloudClient.auth.getSession();cloudUser=data?.session?.user||null;
-  if(cloudUser)await runAfterCloudLogin(false);
+  if(cloudUser){try{await runAfterCloudLogin(false)}catch(err){cloudStatus='Offline · changes pending';console.warn('DapurKu initial sync:',err.message)}}
 }
 async function runAfterCloudLogin(showToast=true){
   if(cloudLoginPromise)return cloudLoginPromise;
@@ -111,7 +123,7 @@ async function afterCloudLogin(showToast=true){
   }
   const saved=localStorage.getItem('dapurkuActiveHousehold');
   const shared=cloudHouseholds.find(h=>h.membership?.role==='member');
-  let target=shared||cloudHouseholds.find(h=>h.id===saved)||cloudHouseholds.find(h=>h.owner_id===cloudUser.id)||cloudHouseholds[0];
+  let target=cloudHouseholds.find(h=>h.id===saved)||shared||cloudHouseholds.find(h=>h.owner_id===cloudUser.id)||cloudHouseholds[0];
   if(target)await activateHousehold(target.id,{showToast:false});
   if(showToast)toast('Kitchen sync connected');
 }
@@ -125,38 +137,78 @@ async function refreshHouseholds(){
 }
 async function activateHousehold(id,{showToast=true}={}){
   if(!cloudClient||!cloudUser)return;const h=cloudHouseholds.find(x=>x.id===id);if(!h)return;
-  activeHousehold=h;localStorage.setItem('dapurkuActiveHousehold',id);unsubscribeCloud();cloudStatus='Syncing…';scheduleRender();
-  await flushSyncQueue();
+  if(activeHousehold&&activeHousehold.id!==id&&!(await flushSyncQueue()))throw new Error('This kitchen has changes waiting to sync. Try again when online.');
+  const binding=(await getOne('settings','cloudBinding'))?.value;
+  if(binding&&binding!==id&&readSyncQueue().some(x=>x.householdId===binding))throw new Error('The previous kitchen has unsynced changes. Sign in to that kitchen and sync it first.');
+  const previousHousehold=activeHousehold;
+  activeHousehold=h;unsubscribeCloud(previousHousehold?.id!==id);cloudStatus='Syncing…';scheduleRender();
+  try{
+  if(binding===id&&!(await flushSyncQueue()))throw new Error('Local changes are still pending. Cloud data was not loaded.');
+  cloudPullBusy=true;
   const {data,error}=await cloudClient.from('dapurku_records').select('household_id,store,record_id,payload,is_deleted,updated_at').eq('household_id',id);if(error)throw error;
-  if(!data?.length)await uploadLocalSnapshot();else await replaceLocalFromCloud(data);
+  if(!data?.length){
+    if(!binding||binding===id)await uploadLocalSnapshot();
+    else await replaceLocalFromCloud([]);
+  }else await replaceLocalFromCloud(data);
+  await putRaw('settings',{id:'cloudBinding',value:id});localStorage.setItem('dapurkuActiveHousehold',id);localStorage.setItem('dapurkuBoundHousehold',id);
+  cloudPullBusy=false;if(readSyncQueue().some(x=>x.householdId===id))flushSyncQueue().catch(()=>{});
   lastCloudPullAt=Date.now();subscribeCloud();cloudMembers=await getCloudMembers();cloudStatus=navigator.onLine?'Synced':'Offline · changes pending';if(showToast)toast(`Using ${h.name}`);scheduleRender();
+  }catch(err){cloudPullBusy=false;activeHousehold=previousHousehold;if(previousHousehold)subscribeCloud();throw err}
 }
 async function resumeCloudSync(force=false){
-  if(cloudResumeBusy||!cloudClient||!cloudUser||!navigator.onLine)return;
-  if(!force&&Date.now()-lastCloudPullAt<5000)return;
+  if(cloudResumePromise)return cloudResumePromise;
+  if(!cloudClient||!cloudUser)throw new Error('Sign in to sync your kitchen.');
+  if(!navigator.onLine)throw new Error('Device is offline. Changes will sync when online.');
+  if(!force&&Date.now()-lastCloudPullAt<5000)return true;
   cloudResumeBusy=true;cloudStatus='Syncing…';scheduleRender();
-  try{
+  cloudResumePromise=(async()=>{try{
     try{await cloudClient.auth.startAutoRefresh()}catch{}
     await refreshHouseholds();
     const current=activeHousehold&&cloudHouseholds.find(h=>h.id===activeHousehold.id);
     const shared=cloudHouseholds.find(h=>h.membership?.role==='member');
     const target=current||shared||cloudHouseholds.find(h=>h.owner_id===cloudUser.id)||cloudHouseholds[0];
     if(target)await activateHousehold(target.id,{showToast:false});
-  }catch(err){cloudStatus='Sync issue · tap Sync Now';console.warn('DapurKu resume sync:',err.message)}finally{cloudResumeBusy=false;scheduleRender()}
+    return true;
+  }catch(err){cloudStatus='Sync issue · tap Sync Now';console.warn('DapurKu resume sync:',err.message);throw err}finally{cloudResumeBusy=false;scheduleRender()}})();
+  try{return await cloudResumePromise}finally{cloudResumePromise=null}
 }
 async function uploadLocalSnapshot(){
-  if(!activeHousehold||!cloudClient)return;const rows=[];for(const store of ['items','shopping','history','recipes']){let vals=await getAll(store);if(store==='recipes')vals=vals.filter(v=>!/^r\d+$/.test(String(v.id||'')));for(const v of vals)rows.push({household_id:activeHousehold.id,store,record_id:String(v.id),payload:v,is_deleted:false,updated_at:new Date().toISOString(),updated_by:cloudUser.id})}
+  if(!activeHousehold||!cloudClient)return;const rows=[];for(const store of SYNC_STORES){let vals=await getAll(store);if(store==='recipes')vals=vals.filter(v=>!/^r\d+$/.test(String(v.id||'')));for(const v of vals)rows.push({household_id:activeHousehold.id,store,record_id:String(v.id),payload:v,is_deleted:false,updated_at:new Date().toISOString(),updated_by:cloudUser.id})}
   if(rows.length){const {error}=await cloudClient.from('dapurku_records').upsert(rows,{onConflict:'household_id,store,record_id'});if(error)throw error}
 }
 async function replaceLocalFromCloud(rows){
-  suppressCloudSync=true;try{for(const st of ['items','shopping','history'])await clearStore(st);const recipes=await getAll('recipes');for(const r of recipes.filter(x=>!/^r\d+$/.test(String(x.id||''))))await delRaw('recipes',r.id);for(const row of rows){if(row.is_deleted)continue;if(!row.payload||!syncableRecord(row.store,row.payload))continue;await putRaw(row.store,row.payload)}await ensureRecipeLibrary()}finally{suppressCloudSync=false}
+  for(const st of ['items','shopping','history'])await clearStore(st);
+  const recipes=await getAll('recipes');for(const r of recipes.filter(x=>!/^r\d+$/.test(String(x.id||''))))await delRaw('recipes',r.id);
+  for(const row of rows){if(row.is_deleted||!row.payload||!syncableRecord(row.store,row.payload))continue;await putRaw(row.store,row.payload)}
+  await ensureRecipeLibrary();
+  for(const change of readSyncQueue().filter(x=>x.householdId===activeHousehold?.id)){
+    if(change.isDeleted)await delRaw(change.store,change.id);
+    else if(change.payload&&syncableRecord(change.store,change.payload))await putRaw(change.store,change.payload);
+  }
 }
 function subscribeCloud(){
-  if(!cloudClient||!activeHousehold)return;cloudChannel=cloudClient.channel(`dapurku-${activeHousehold.id}`).on('postgres_changes',{event:'*',schema:'public',table:'dapurku_records',filter:`household_id=eq.${activeHousehold.id}`},async payload=>{const row=payload.new||payload.old;if(!row||row.household_id!==activeHousehold.id)return;suppressCloudSync=true;try{if(row.is_deleted)await delRaw(row.store,row.record_id);else if(row.payload&&syncableRecord(row.store,row.payload))await putRaw(row.store,row.payload)}finally{suppressCloudSync=false}cloudStatus='Synced';scheduleRender()}).subscribe();
+  if(!cloudClient||!activeHousehold)return;cloudChannel=cloudClient.channel(`dapurku-${activeHousehold.id}`).on('postgres_changes',{event:'*',schema:'public',table:'dapurku_records',filter:`household_id=eq.${activeHousehold.id}`},payload=>{const row=payload.new||payload.old;if(!row||row.household_id!==activeHousehold.id)return;cloudRealtimeNeedsPull=true;scheduleCloudPull()}).subscribe();
 }
-function unsubscribeCloud(){if(cloudClient&&cloudChannel){cloudClient.removeChannel(cloudChannel).catch?.(()=>{});cloudChannel=null}}
+function scheduleCloudPull(){if(!cloudRealtimeNeedsPull)return;clearTimeout(cloudRealtimeTimer);cloudRealtimeTimer=setTimeout(async()=>{if(cloudResumePromise)await cloudResumePromise.catch(()=>{});if(!cloudRealtimeNeedsPull)return;cloudRealtimeNeedsPull=false;await resumeCloudSync(true).catch(()=>{});if(cloudRealtimeNeedsPull)scheduleCloudPull()},350)}
+function unsubscribeCloud(cancelPull=true){if(cancelPull){clearTimeout(cloudRealtimeTimer);cloudRealtimeNeedsPull=false}if(cloudClient&&cloudChannel){cloudClient.removeChannel(cloudChannel).catch?.(()=>{});cloudChannel=null}}
 async function flushSyncQueue(){
-  if(cloudBusy||!cloudClient||!cloudUser||!activeHousehold||!navigator.onLine)return;let q=readSyncQueue();const current=q.filter(x=>(x.householdId||activeHousehold.id)===activeHousehold.id);if(!current.length){cloudStatus='Synced';return}cloudBusy=true;cloudStatus='Syncing…';try{const rows=current.map(x=>({household_id:activeHousehold.id,store:x.store,record_id:String(x.id),payload:x.isDeleted?null:x.payload,is_deleted:!!x.isDeleted,updated_at:new Date().toISOString(),updated_by:cloudUser.id}));const {error}=await cloudClient.from('dapurku_records').upsert(rows,{onConflict:'household_id,store,record_id'});if(error)throw error;const sent=new Set(current.map(x=>x.key));writeSyncQueue(q.filter(x=>!sent.has(x.key)));cloudStatus='Synced'}catch(err){cloudStatus='Offline · changes pending';console.warn('DapurKu sync:',err.message)}finally{cloudBusy=false;scheduleRender()}}
+  if(cloudFlushPromise)return cloudFlushPromise;
+  if(!cloudClient||!cloudUser||!activeHousehold||!navigator.onLine)return false;
+  const householdId=activeHousehold.id;
+  cloudFlushPromise=(async()=>{cloudBusy=true;cloudStatus='Syncing…';try{
+    while(true){
+      const current=readSyncQueue().filter(x=>x.householdId===householdId);
+      if(!current.length)break;
+      const rows=current.map(x=>({household_id:householdId,store:x.store,record_id:String(x.id),payload:x.isDeleted?null:x.payload,is_deleted:!!x.isDeleted,updated_at:new Date().toISOString(),updated_by:cloudUser.id}));
+      const {error}=await cloudClient.from('dapurku_records').upsert(rows,{onConflict:'household_id,store,record_id'});if(error)throw error;
+      const sent=new Map(current.map(x=>[x.key,x.changeId||x.queuedAt]));
+      writeSyncQueue(readSyncQueue().filter(x=>sent.get(x.key)!==(x.changeId||x.queuedAt)));
+    }
+    cloudStatus='Synced';return true;
+  }catch(err){cloudStatus='Offline · changes pending';console.warn('DapurKu sync:',err.message);return false}finally{cloudBusy=false;scheduleRender()}})();
+  let completed=false;
+  try{completed=await cloudFlushPromise;return completed}finally{cloudFlushPromise=null;if(completed&&readSyncQueue().some(x=>x.householdId===householdId))setTimeout(()=>flushSyncQueue().catch(()=>{}),0)}
+}
 async function cloudSignIn(email,password){if(!cloudConfigured)throw new Error('Supabase is not configured yet.');const {error}=await cloudClient.auth.signInWithPassword({email,password});if(error)throw error}
 async function cloudSignUp(email,password){if(!cloudConfigured)throw new Error('Supabase is not configured yet.');const {data,error}=await cloudClient.auth.signUp({email,password});if(error)throw error;return data}
 async function cloudSignOut(){if(!cloudClient)return;await cloudClient.auth.signOut();cloudUser=null;activeHousehold=null;cloudHouseholds=[];cloudMembers=[];unsubscribeCloud();cloudStatus='Signed out';scheduleRender()}
@@ -3042,8 +3094,8 @@ const seedRecipes=[
   }
 ];
 
-function isoMinus(days){const d=new Date();d.setDate(d.getDate()-days);return d.toISOString().slice(0,10)}
-function isoPlus(days){const d=new Date();d.setDate(d.getDate()+days);return d.toISOString().slice(0,10)}
+function isoMinus(days){const d=new Date();d.setDate(d.getDate()-days);return localDateISO(d)}
+function isoPlus(days){const d=new Date();d.setDate(d.getDate()+days);return localDateISO(d)}
 
 const seedItems=[
   ['Chicken','Segar','in',false,isoPlus(18),'',1,'pack'],['Coconut milk','Barang Kering','low',true,isoPlus(90),'',1,'box'],
@@ -3062,26 +3114,35 @@ const seedHistory=[
 async function ensureRecipeLibrary(){
   const existing=await getAll('recipes');
   const custom=existing.filter(r=>!String(r.id).match(/^r\d+$/));
-  for(const r of seedRecipes) await put('recipes',r);
-  for(const r of custom) await put('recipes',r);
-  await put('settings',{id:'recipeLibraryVersion',value:3});
+  for(const r of seedRecipes) await putRaw('recipes',r);
+  for(const r of custom) await putRaw('recipes',r);
+  await putRaw('settings',{id:'recipeLibraryVersion',value:3});
 }
 
 async function seedIfNeeded(){
   const initialized=await getOne('settings','initialized');
-  if(!initialized){
-    for(const i of seedItems)await put('items',i);for(const h of seedHistory)await put('history',h);
-    await put('settings',{id:'initialized',value:true});await put('settings',{id:'demo',value:true});
-  }
-  const lib=await getOne('settings','recipeLibraryVersion');
-  if(!lib||lib.value<3)await ensureRecipeLibrary();
-  await syncAutoShopping();
+  if(!initialized)suppressCloudSync=true;
+  try{
+    if(!initialized){
+      for(const i of seedItems)await putRaw('items',i);for(const h of seedHistory)await putRaw('history',h);
+      await putRaw('settings',{id:'initialized',value:true});await putRaw('settings',{id:'demo',value:true});
+    }
+    const lib=await getOne('settings','recipeLibraryVersion');
+    if(!lib||lib.value<3)await ensureRecipeLibrary();
+    await syncAutoShopping();
+  }finally{if(!initialized)suppressCloudSync=false}
 }
 
 async function syncAutoShopping(){
+  if(autoShoppingPromise)return autoShoppingPromise;
+  autoShoppingPromise=(async()=>{
   const items=await getAll('items');let shopping=await getAll('shopping');
+  const itemIds=new Set(items.map(i=>i.id));
+  for(const orphan of shopping.filter(s=>s.source==='auto'&&s.itemId&&!itemIds.has(s.itemId))){await del('shopping',orphan.id);shopping=shopping.filter(s=>s.id!==orphan.id)}
   for(const item of items){
-    const existing=shopping.find(s=>s.itemId===item.id&&s.source==='auto');
+    const autoEntries=shopping.filter(s=>s.itemId===item.id&&s.source==='auto');
+    const existing=autoEntries[0];
+    for(const duplicate of autoEntries.slice(1)){await del('shopping',duplicate.id);shopping=shopping.filter(s=>s.id!==duplicate.id)}
     const autoDismissed=(item.status==='low'||item.status==='out')&&item.autoShoppingDismissedStatus===item.status;
     if(item.status==='low'||item.status==='out'){
       if(autoDismissed){
@@ -3092,6 +3153,8 @@ async function syncAutoShopping(){
       else if(existing.reason!==item.status||existing.name!==item.name){existing.reason=item.status;existing.name=item.name;existing.category=categoryLabel(item.category||existing.category);existing.icon=itemIcon(item);await put('shopping',existing)}
     }else if(existing){await del('shopping',existing.id);shopping=shopping.filter(s=>s.id!==existing.id)}
   }
+  })();
+  try{return await autoShoppingPromise}finally{autoShoppingPromise=null}
 }
 
 function statusLabel(s){return s==='in'?'In stock':s==='low'?'Running low':'Out'}
@@ -3122,7 +3185,7 @@ const ITEM_ICON_RULES=[
 function autoItemIcon(name=''){const n=basicName(name);for(const [rx,icon] of ITEM_ICON_RULES)if(rx.test(n))return icon;return'🛍️'}
 function itemIcon(itemOrName){if(typeof itemOrName==='string')return autoItemIcon(itemOrName);return itemOrName?.icon||autoItemIcon(itemOrName?.name||'')}
 function categoryForName(name=''){const n=basicName(name);if(/susu|milk|keju|cheese|mentega|butter|yogurt|yoghurt|telur|egg/.test(n))return'Tenusu';if(/ayam|chicken|daging|beef|ikan|fish|udang|prawn|ketam|crab|sotong|squid|sayur|bawang|garlic|tomato|kentang|potato|cili|chilli|buah|fruit|pisang|banana|epal|apple|oren|orange/.test(n))return'Segar';if(/frozen|sejuk beku|nugget|ais krim|ice cream/.test(n))return'Sejuk Beku';if(/milo|kopi|coffee|teh|tea|jus|juice|drink|air mineral|water/.test(n))return'Minuman';if(/kicap|sos|sauce|pes|paste|minyak|oil|garam|salt|gula|sugar|rempah|spice/.test(n))return'Sos & Perencah';if(/tisu|tissue|sabun|soap|detergent|garbage|sampah|sponge|span|cleaner/.test(n))return'Keperluan Rumah';return'Barang Kering'}
-function itemMatch(ingredient,items){const target=normalizeName(ingredient);return items.find(i=>{const n=normalizeName(i.name);return n===target||n.includes(target)||target.includes(n)})||null}
+function itemMatch(ingredient,items){const target=normalizeName(ingredient);return target?items.find(i=>normalizeName(i.name)===target)||null:null}
 function recipeAssessment(recipe,items){
   const details=recipe.ingredients.map(ing=>{const found=itemMatch(ing.name,items);let state='missing';if(found)state=found.status==='in'?'have':found.status==='low'?'low':'missing';const expiring=!!(found?.expiry&&daysUntil(found.expiry)>=0&&daysUntil(found.expiry)<=5);return{name:ing.name,item:found,state,expiring}});
   const have=details.filter(d=>d.state==='have').length,low=details.filter(d=>d.state==='low').length,total=details.length;
@@ -3135,7 +3198,11 @@ function toast(msg){const el=$('#toast');el.textContent=msg;el.classList.add('sh
 function closeModal(){const root=$('#modalRoot');root.innerHTML='';window.__stopScanner?.();window.__stopScanner=null}
 function modal(title,body){$('#modalRoot').innerHTML=`<div class="modal-backdrop" id="modalBackdrop"><div class="modal"><div class="modal-head"><h3>${title}</h3><button class="close-btn" id="modalClose">✕</button></div>${body}</div></div>`;$('#modalClose').onclick=closeModal;$('#modalBackdrop').addEventListener('click',e=>{if(e.target.id==='modalBackdrop')closeModal()})}
 
-async function render(){await syncAutoShopping();await Promise.all([renderHome(),renderShop(),renderPantry(),renderRecipes(),renderMore()])}
+async function render(){
+  if(renderPromise){renderPending=true;return renderPromise}
+  renderPromise=(async()=>{do{renderPending=false;await syncAutoShopping();await Promise.all([renderHome(),renderShop(),renderPantry(),renderRecipes(),renderMore()])}while(renderPending)})();
+  try{return await renderPromise}finally{renderPromise=null}
+}
 function switchView(name){currentView=name;$$('.view').forEach(v=>v.classList.toggle('active',v.id===`view-${name}`));$$('.nav-btn').forEach(b=>b.classList.toggle('active',b.dataset.view===name));window.scrollTo({top:0,behavior:'smooth'})}
 
 async function renderHome(){
@@ -3225,7 +3292,7 @@ async function renderMore(){
     <div class="section-head"><div><h3>Family Sync</h3><p>Share one live kitchen using separate email accounts.</p></div></div>${syncHtml}
     <div class="section-head"><div><h3>Purchase History</h3><p>Keep More tidy — open history only when you need it.</p></div></div>${history.length?`<button class="history-hub" id="manageHistoryBtn"><span class="history-hub-icon">🧾</span><div><b>${history.length} purchase${history.length===1?'':'s'} recorded</b><small>Latest · ${fmtDate(history[0].date)}${history[0].store?` · ${escapeHtml(history[0].store)}`:''}</small></div><em>View & delete ›</em></button>`:'<div class="empty-soft">No purchase history yet.</div>'}
     <div class="section-head"><div><h3>Backup</h3><p>Useful before changing phone or clearing browser data.</p></div></div><div class="settings-row"><button class="btn btn-secondary" id="exportBtn">Export Backup</button><label class="btn btn-secondary file-btn">Import Backup<input type="file" id="importFile" accept="application/json"></label></div>
-    <div class="section-head"><div><h3>About</h3></div></div><div class="note">DapurKu v3.4 · Offline-first PWA · Light/Dark · Family Sync · auto purchase dates · smart shopping · expiry · history · prediction · pantry-based recipe discovery.</div>
+    <div class="section-head"><div><h3>About</h3></div></div><div class="note">DapurKu v3.5 · Offline-first PWA · Light/Dark · Family Sync · auto purchase dates · smart shopping · expiry · history · prediction · pantry-based recipe discovery.</div>
     <div class="danger-zone"><b>Reset local data</b><p>This deletes the local copy on this device. If Family Sync is active, cloud data can download again on the next sync.</p><button class="btn btn-danger-soft" id="resetBtn">Reset Local DapurKu</button></div>`;
   $('#themeToggle').onclick=()=>{toggleTheme();renderMore()};$('#exportBtn').onclick=exportData;$('#importFile').onchange=importData;$('#resetBtn').onclick=confirmReset;if($('#manageHistoryBtn'))$('#manageHistoryBtn').onclick=openHistoryManager;
   if($('#signInBtn'))$('#signInBtn').onclick=()=>openAuthModal('signin');if($('#signUpBtn'))$('#signUpBtn').onclick=()=>openAuthModal('signup');if($('#signOutBtn'))$('#signOutBtn').onclick=async()=>{await cloudSignOut();toast('Signed out. Local data stays on this device.');render()};
@@ -3278,7 +3345,22 @@ function openShoppingForm(prefill=''){
 async function openFinishShopping(){
   const all=await getAll('shopping'),checked=all.filter(x=>x.checked);if(!checked.length){toast('Tick at least one purchased item first');return}
   modal('Finish Shopping',`<form id="finishForm"><div class="field"><label>Purchase date</label><input name="purchaseDate" type="date" value="${todayISO()}" required></div><div class="field"><label>Store (optional)</label><input name="store" placeholder="Lotus / NSK / AEON"></div><div class="field"><label>Total spent RM (optional)</label><input name="total" type="number" min="0" step="0.01" placeholder="0.00"></div><div class="note">${checked.length} purchased item${checked.length===1?'':'s'} will be recorded in Purchase History and restocked as <b>In stock</b>.</div><div class="form-actions"><button class="btn btn-primary" type="submit">Finish & Restock</button></div></form>`);
-  $('#finishForm').onsubmit=async e=>{e.preventDefault();const f=new FormData(e.target),purchaseDate=f.get('purchaseDate')||todayISO(),items=await getAll('items'),histItems=[];for(const s of checked){let item=s.itemId?items.find(i=>i.id===s.itemId):itemMatch(s.name,items);if(item){item.status='in';delete item.autoShoppingDismissedStatus;item.updatedAt=todayISO();item.lastPurchasedAt=purchaseDate;await put('items',item)}else if(s.source==='recipe'){item={id:uid(),name:s.name,icon:s.icon||autoItemIcon(s.name),category:categoryLabel(s.category||'Lain-lain'),status:'in',favorite:false,expiry:'',barcode:'',qty:s.qty||1,unit:'',createdAt:todayISO(),updatedAt:todayISO(),lastPurchasedAt:purchaseDate};await put('items',item)}histItems.push({name:s.name,qty:s.qty||1});await del('shopping',s.id)}await put('history',{id:uid(),date:purchaseDate,store:f.get('store').trim(),total:Number(f.get('total')||0),items:histItems});shoppingMode=false;shoppingSnapshot=null;closeModal();await syncAutoShopping();toast(`Shopping saved · ${fmtDate(purchaseDate)}`);render()};
+  let finishing=false;
+  $('#finishForm').onsubmit=async e=>{
+    e.preventDefault();if(finishing)return;finishing=true;const button=e.target.querySelector('[type="submit"]');button.disabled=true;
+    try{
+      const f=new FormData(e.target),purchaseDate=f.get('purchaseDate')||todayISO(),items=await getAll('items'),current=(await getAll('shopping')).filter(x=>x.checked),histItems=[];
+      if(!current.length)throw new Error('No purchased items are checked.');
+      for(const s of current){
+        let item=(s.itemId&&items.find(i=>i.id===s.itemId))||itemMatch(s.name,items);
+        if(item){item.status='in';delete item.autoShoppingDismissedStatus;item.updatedAt=todayISO();item.lastPurchasedAt=purchaseDate;await put('items',item)}
+        else{item={id:uid(),name:s.name,icon:s.icon||autoItemIcon(s.name),category:s.category==='Resipi'?categoryForName(s.name):categoryLabel(s.category||'Lain-lain'),status:'in',favorite:false,expiry:'',barcode:'',qty:s.qty||1,unit:s.unit||'',createdAt:todayISO(),updatedAt:todayISO(),lastPurchasedAt:purchaseDate};items.push(item);await put('items',item)}
+        histItems.push({name:s.name,qty:s.qty||1});await del('shopping',s.id);
+      }
+      await put('history',{id:uid(),date:purchaseDate,store:f.get('store').trim(),total:Number(f.get('total')||0),items:histItems});
+      shoppingMode=false;shoppingSnapshot=null;closeModal();await syncAutoShopping();toast(`Shopping saved · ${fmtDate(purchaseDate)}`);render();
+    }catch(err){toast(`Could not finish shopping: ${err.message}`);finishing=false;button.disabled=false}
+  };
 }
 
 async function openRecipeDetail(id){
@@ -3299,10 +3381,45 @@ async function openPredictionCheck(name){const items=await getAll('items'),item=
 
 function openScanner(onFound){modal('Scan Barcode',`<div class="scanner-wrap"><video id="scannerVideo" playsinline muted></video><div class="scanner-status" id="scannerStatus">Requesting camera access...</div></div><div class="note">If your browser does not support barcode detection, enter the barcode manually in Add Pantry Item. No external scanner library is loaded, so the PWA remains offline-friendly.</div>`);const video=$('#scannerVideo'),status=$('#scannerStatus');let stream=null,stopped=false;const stop=()=>{stopped=true;if(stream)stream.getTracks().forEach(t=>t.stop())};window.__stopScanner=stop;(async()=>{if(!('BarcodeDetector'in window)){status.textContent='BarcodeDetector is not supported in this browser. Use manual barcode entry.';return}try{const formats=await BarcodeDetector.getSupportedFormats(),detector=new BarcodeDetector({formats:formats.filter(f=>['ean_13','ean_8','upc_a','upc_e','code_128'].includes(f))});stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}},audio:false});video.srcObject=stream;await video.play();status.textContent='Point the camera at a barcode...';const tick=async()=>{if(stopped)return;try{const codes=await detector.detect(video);if(codes.length){const code=codes[0].rawValue;stop();closeModal();onFound?.(code);return}}catch{}requestAnimationFrame(tick)};tick()}catch(err){status.textContent='Could not open camera: '+err.message}})()}
 
-async function exportData(){const data={version:'3.4',exportedAt:new Date().toISOString()};for(const s of STORE_NAMES)data[s]=await getAll(s);const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`DapurKu-backup-${todayISO()}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);toast('Backup exported')}
-async function importData(e){const file=e.target.files?.[0];if(!file)return;try{const data=JSON.parse(await file.text());for(const s of STORE_NAMES){if(Array.isArray(data[s])){await clearStore(s);for(const x of data[s])await put(s,x)}}await put('settings',{id:'initialized',value:true});await ensureRecipeLibrary();toast('Backup imported');render()}catch(err){alert('Import failed: '+err.message)}e.target.value=''}
-async function confirmReset(){if(!confirm('Delete ALL DapurKu data stored on this device?'))return;for(const s of STORE_NAMES)await clearStore(s);await put('settings',{id:'initialized',value:true});await put('settings',{id:'demo',value:false});await ensureRecipeLibrary();toast('Local data cleared. Built-in recipe library restored.');render()}
-async function confirmStartBlank(){if(!confirm('Remove the demo pantry and purchase history? The recipe library will stay.'))return;for(const s of ['items','shopping','history'])await clearStore(s);await put('settings',{id:'demo',value:false});toast('Demo data removed. Your kitchen is ready.');render()}
+async function exportData(){const data={version:'3.5',exportedAt:new Date().toISOString()};for(const s of STORE_NAMES)data[s]=await getAll(s);data.settings=data.settings.filter(x=>x.id!=='cloudBinding');const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`DapurKu-backup-${todayISO()}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);toast('Backup exported')}
+async function importData(e){
+  const file=e.target.files?.[0];if(!file)return;
+  try{
+    const data=JSON.parse(await file.text());
+    for(const store of ['items','shopping','history'])if(!Array.isArray(data[store])||data[store].some(x=>!x||typeof x.id!=='string'))throw new Error(`Invalid ${store} records in backup.`);
+    if(data.recipes!==undefined&&(!Array.isArray(data.recipes)||data.recipes.some(x=>!x||typeof x.id!=='string')))throw new Error('Invalid recipes in backup.');
+    const before={};for(const store of SYNC_STORES)before[store]=await getAll(store);
+    const binding=(await getOne('settings','cloudBinding'))?.value||localStorage.getItem('dapurkuBoundHousehold');
+    pauseCloudFlush=true;suppressCloudSync=true;
+    try{
+      for(const store of STORE_NAMES){if(!Array.isArray(data[store]))continue;await clearStore(store);for(const record of data[store]){if(store==='settings'&&record.id==='cloudBinding')continue;await putRaw(store,record)}}
+      if(binding)await putRaw('settings',{id:'cloudBinding',value:binding});
+      await putRaw('settings',{id:'initialized',value:true});await ensureRecipeLibrary();
+    }finally{suppressCloudSync=false}
+    if(activeHousehold||binding){
+      for(const store of SYNC_STORES){
+        const after=(await getAll(store)).filter(x=>syncableRecord(store,x));const ids=new Set(after.map(x=>x.id));
+        for(const record of before[store].filter(x=>syncableRecord(store,x)&&!ids.has(x.id)))queueCloudRecord(store,record.id,record,true);
+        for(const record of after)queueCloudRecord(store,record.id,record,false);
+      }
+    }
+    pauseCloudFlush=false;
+    const synced=activeHousehold?await flushSyncQueue():!binding;toast(synced?'Backup imported':'Backup imported · cloud sync pending');render();
+  }catch(err){alert('Import failed: '+err.message)}finally{pauseCloudFlush=false;e.target.value=''}
+}
+async function confirmReset(){
+  if(!confirm('Delete ALL DapurKu data stored on this device?'))return;
+  const householdId=activeHousehold?.id||localStorage.getItem('dapurkuBoundHousehold');
+  for(const store of STORE_NAMES)await clearStore(store);
+  if(householdId){await putRaw('settings',{id:'cloudBinding',value:householdId});writeSyncQueue(readSyncQueue().filter(x=>x.householdId!==householdId))}
+  await put('settings',{id:'initialized',value:true});await put('settings',{id:'demo',value:false});await ensureRecipeLibrary();toast('Local data cleared. Built-in recipe library restored.');render();
+}
+async function confirmStartBlank(){
+  if(!confirm('Remove the demo pantry and purchase history? The recipe library will stay.'))return;
+  pauseCloudFlush=true;
+  try{for(const store of ['items','shopping','history'])for(const record of await getAll(store))await del(store,record.id)}finally{pauseCloudFlush=false}
+  await put('settings',{id:'demo',value:false});if(activeHousehold)await flushSyncQueue();toast('Demo data removed. Your kitchen is ready.');render();
+}
 function wireNav(){$$('.nav-btn').forEach(b=>b.onclick=()=>switchView(b.dataset.view));if($('#themeBtn'))$('#themeBtn').onclick=toggleTheme}
 window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;$('#installBtn').classList.remove('hidden')});$('#installBtn').onclick=async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;$('#installBtn').classList.add('hidden')};window.addEventListener('appinstalled',()=>toast('DapurKu installed'));
-(async function init(){try{applyTheme(getTheme());await openDB();await seedIfNeeded();wireNav();await initCloudSync();await render();if('serviceWorker'in navigator)navigator.serviceWorker.register('./sw.js?v=3.4').catch(()=>{})}catch(err){document.body.innerHTML=`<pre style="padding:20px">DapurKu could not start:\n${escapeHtml(err.stack||err.message)}</pre>`}})();
+(async function init(){try{applyTheme(getTheme());await openDB();await seedIfNeeded();wireNav();await initCloudSync();await render();if('serviceWorker'in navigator)navigator.serviceWorker.register('./sw.js?v=3.5').catch(()=>{})}catch(err){document.body.innerHTML=`<pre style="padding:20px">DapurKu could not start:\n${escapeHtml(err.stack||err.message)}</pre>`}})();
