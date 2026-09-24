@@ -1,4 +1,4 @@
-DapurKu v3.1.0
+DapurKu v3.5.0
 ============
 
 New in v3
@@ -54,3 +54,14 @@ v3.3 also fixes iPhone/iOS PWA sync by:
 - using no-store for Supabase GET requests
 - pulling fresh cloud data when the PWA returns to the foreground
 - enabling Supabase Realtime worker support
+
+DapurKu v3.5 SHOP AND SYNC FIX
+-----------------------------
+- Purchased Shop items, including manually added items, are added to Pantry and Purchase History.
+- Rapid changes to the same item stay queued until the latest change reaches Supabase.
+- A failed cloud upload leaves local changes intact and shows a sync issue.
+- Each device remembers which kitchen its local data belongs to; switching kitchens cannot upload the previous kitchen's items into an empty one.
+- Import Backup replaces matching cloud records, including deletions. Reset Local DapurKu still clears only this device.
+- Auto Shopping removes duplicate and orphaned entries. Item matching uses exact normalized names to avoid restocking the wrong product.
+- Purchase dates follow the device's local date, and Sync Now reports failures.
+- Installed PWAs receive the new app code through a fresh service worker cache.
